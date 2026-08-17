@@ -1,0 +1,52 @@
+metrics:
+  revenue:
+    description: >
+      Total sales revenue. In Northwind, revenue is calculated from order line items:
+      SUM(UnitPrice * Quantity * (1 - Discount)).
+    formula: "SUM(UnitPrice * Quantity * (1 - Discount))"
+    default_aggregation: sum
+
+  order_count:
+    description: Total number of orders.
+    formula: "COUNT(DISTINCT OrderID)"
+    default_aggregation: count
+
+  line_item_count:
+    description: Total number of order detail line items.
+    formula: "COUNT(*)"
+    default_aggregation: count
+
+  quantity_sold:
+    description: Total quantity of products sold.
+    formula: "SUM(Quantity)"
+    default_aggregation: sum
+
+  average_order_value:
+    description: Average revenue per order.
+    formula: "SUM(UnitPrice * Quantity * (1 - Discount)) / COUNT(DISTINCT OrderID)"
+    default_aggregation: average
+
+  top_customers_by_revenue:
+    description: Customers ranked by total revenue.
+    join_logic: "Customers -> Orders -> OrderDetails"
+    formula: "SUM(UnitPrice * Quantity * (1 - Discount))"
+
+  top_products_by_revenue:
+    description: Products ranked by total revenue.
+    join_logic: "Products -> OrderDetails"
+    formula: "SUM(UnitPrice * Quantity * (1 - Discount))"
+
+  top_products_by_quantity:
+    description: Products ranked by total quantity sold.
+    join_logic: "Products -> OrderDetails"
+    formula: "SUM(Quantity)"
+
+  revenue_by_country:
+    description: Revenue grouped by shipping country or customer country.
+    common_dimensions:
+      - ShipCountry
+      - Country
+
+  monthly_orders:
+    description: Number of orders grouped by month.
+    sqlite_date_formula: "strftime('%Y-%m', OrderDate)"

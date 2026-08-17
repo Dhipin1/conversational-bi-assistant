@@ -1,0 +1,15 @@
+streamlit
+python-dotenv
+pandas
+plotly
+sqlalchemy
+sqlglot
+pyyaml
+langchain
+langchain-community
+langchain-ollama
+langchain-core
+rank-bm25
+langdetect
+tabulate
+kaleido

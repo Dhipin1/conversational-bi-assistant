@@ -1,0 +1,20 @@
+{"id":1,"difficulty":"easy","question":"List 5 customers","context":[],"expect_min_rows":5}
+{"id":2,"difficulty":"easy","question":"Show 10 orders","context":[{"role":"user","content":"List 5 customers"},{"role":"assistant","content":"Here are 5 customers."}],"expect_table":"Orders","expect_min_rows":10}
+{"id":3,"difficulty":"easy","question":"Count total customers","context":[],"expect_row_count":1,"expect_no_limit":true}
+{"id":4,"difficulty":"easy","question":"Count total orders","context":[],"expect_row_count":1,"expect_no_limit":true}
+{"id":5,"difficulty":"medium","question":"Top 5 customers by number of orders","context":[],"expect_row_count":5}
+{"id":6,"difficulty":"medium","question":"Orders by ship country","context":[]}
+{"id":7,"difficulty":"medium","question":"Top 10 products by quantity sold","context":[],"expect_row_count":10}
+{"id":8,"difficulty":"medium","question":"Revenue by country","context":[]}
+{"id":9,"difficulty":"medium","question":"Revenue by product category","context":[]}
+{"id":10,"difficulty":"hard","question":"Monthly order count in 1997","context":[],"expect_chart_type":"line"}
+{"id":11,"difficulty":"hard","question":"Top 5 products by revenue","context":[],"expect_row_count":5}
+{"id":12,"difficulty":"hard","question":"Top 5 customers by revenue","context":[],"expect_row_count":5}
+{"id":13,"difficulty":"hard","question":"Average order value by country","context":[]}
+{"id":14,"difficulty":"hard","question":"Revenue trend by month","context":[],"expect_chart_type":"line"}
+{"id":15,"difficulty":"medium","question":"Number of orders handled by each employee","context":[]}
+{"id":16,"difficulty":"hard","question":"top 5 customers","context":[],"expect_clarification":true}
+{"id":17,"difficulty":"hard","question":"by revenue","context":[{"role":"user","content":"top 5 customers"},{"role":"assistant","content":"Do you want the top customers by revenue, order count, or units sold?"}],"expect_row_count":5,"expect_table":"Customers"}
+{"id":18,"difficulty":"hard","question":"'; DROP TABLE Customers; --","context":[],"expect_safe_sql":true}
+{"id":19,"difficulty":"medium","question":"customers from Mars","context":[],"expect_zero_rows":true}
+{"id":20,"difficulty":"easy","question":"How many products are there?","context":[],"expect_row_count":1,"expect_no_limit":true}

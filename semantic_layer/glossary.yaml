@@ -1,0 +1,53 @@
+glossary:
+  sales:
+    meaning: >
+      In this project, sales means revenue unless the user specifically asks
+      for quantity sold or number of orders.
+
+  revenue:
+    meaning: >
+      Revenue is computed from order line items:
+      UnitPrice * Quantity * (1 - Discount).
+
+  top:
+    meaning: >
+      Sort results in descending order by the requested metric and return the highest values.
+
+  best:
+    meaning: >
+      Usually means highest revenue unless the user says by order count or quantity.
+
+  recent:
+    meaning: >
+      Use the latest date available in the related date column such as OrderDate or ShippedDate.
+
+  customer:
+    meaning: Entity buying products.
+
+  product:
+    meaning: Item sold in order details.
+
+join_hints:
+  orders_to_order_details:
+    description: Orders join to order details using OrderID.
+    join: "Orders.OrderID = OrderDetails.OrderID OR Orders.Id = OrderDetails.OrderID"
+
+  order_details_to_products:
+    description: Order details join to products using ProductID.
+    join: "OrderDetails.ProductID = Products.ProductID OR OrderDetails.ProductID = Products.Id"
+
+  products_to_categories:
+    description: Products join to categories using CategoryID.
+    join: "Products.CategoryID = Categories.CategoryID OR Products.CategoryID = Categories.Id"
+
+  orders_to_customers:
+    description: Orders join to customers using CustomerID.
+    join: "Orders.CustomerID = Customers.CustomerID OR Orders.CustomerID = Customers.Id"
+
+  orders_to_employees:
+    description: Orders join to employees using EmployeeID.
+    join: "Orders.EmployeeID = Employees.EmployeeID OR Orders.EmployeeID = Employees.Id"
+
+  orders_to_shippers:
+    description: Orders join to shippers using ShipperID / ShipVia.
+    join: "Orders.ShipVia = Shippers.ShipperID OR Orders.ShipperID = Shippers.ShipperID"

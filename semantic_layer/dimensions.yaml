@@ -1,0 +1,39 @@
+dimensions:
+  time:
+    description: Date-related columns useful for trends.
+    examples:
+      - OrderDate
+      - ShippedDate
+      - RequiredDate
+
+  geography:
+    description: Location-related columns.
+    examples:
+      - ShipCountry
+      - ShipCity
+      - Country
+      - City
+      - Region
+
+  customer:
+    description: Customer-related dimensions.
+    examples:
+      - CustomerID
+      - CompanyName
+      - ContactName
+      - Country
+
+  product:
+    description: Product-related dimensions.
+    examples:
+      - ProductID
+      - ProductName
+      - CategoryID
+
+  employee:
+    description: Employee/salesperson-related dimensions.
+    examples:
+      - EmployeeID
+      - FirstName
+      - LastName
+      - Title
