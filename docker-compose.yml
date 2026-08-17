@@ -1,0 +1,12 @@
+services:
+  bi-assistant:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      - DB_URL=sqlite:///./db/northwind.db
+      - APP_TITLE=Conversational BI Assistant (Advanced)
+      - MAX_FIX_RETRIES=2
+      - LLM_PROVIDER=groq
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GROQ_MODEL=${GROQ_MODEL}
