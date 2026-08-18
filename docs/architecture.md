@@ -1,72 +1,114 @@
-# Architecture (Conversational BI Assistant)
+# Architecture — Conversational BI Assistant (Advanced)
 
 ## Overview
-This project is a Conversational BI (Business Intelligence) Assistant that allows users to query a SQL database using natural language. It generates safe read-only SQL, executes it, and returns results as both tables and visualizations. It also supports multi-turn follow-up questions using conversation context.
+This project is a Conversational BI (Business Intelligence) Assistant that lets users query a SQL database using natural language. It generates **read-only safe SQL**, validates it using a **safety layer + RBAC**, executes it, and returns:
+- an answer summary
+- generated SQL (transparency)
+- a result table
+- interactive visualizations
+
+It supports multi-turn follow-ups using conversation context and includes query history/favorites for BI workflows.
+
+---
 
 ## High-level System Flow
 1. User logs in (role-based access)
-2. User asks a question in natural language
-3. System retrieves relevant schema + semantic context (RAG-style)
-4. LLM generates SQL (SQLite dialect)
-5. Safety layer validates the SQL (read-only SELECT + LIMIT)
-6. RBAC policy validates tables/columns allowed for the user role
-7. SQL is executed on the Northwind SQLite database
-8. If execution fails, a self-correction loop repairs SQL using DB error feedback
-9. Results are displayed as:
+2. User asks a BI question in natural language
+3. System resolves ambiguity (may ask clarification)
+4. System retrieves relevant schema + semantic context (RAG-style)
+5. LLM generates SQL (SQLite dialect)
+6. SQL is normalized/cleaned and corrected for schema/table-name variants
+7. Safety layer validates SQL (read-only SELECT / single statement / limit)
+8. RBAC validates allowed tables/columns and maximum rows per role
+9. SQL executes against Northwind SQLite database
+10. If SQL fails, a self-correction loop retries using DB error feedback
+11. Results are displayed as:
    - natural-language summary
    - SQL (transparent)
-   - table output
-   - chart/graph output
-10. Logs are stored for query history and evaluation
+   - data table
+   - chart/graph
+12. Logs are stored for query history and evaluation
+
+---
 
 ## Main Components
 
 ### A) Frontend (Streamlit)
-- Pages:
+- Multi-page Streamlit app:
+  - Home
   - Login
   - Chat BI Assistant
   - Query History
-  - Admin Settings
-- Chat interface for user questions and multi-turn follow-ups
-- Visualization customization:
+  - Admin Settings (admin only)
+- Chat interface:
+  - multi-turn conversation
+  - shows generated SQL + results + visualization
+- Visualization customization (UI controls may vary by page):
   - chart type
   - axis selection
   - sorting
   - Top-N filtering
-  - date filtering (when applicable)
 - Export:
   - results CSV
-  - chart image (PNG)
   - chart HTML
+  - chart PNG (requires Kaleido + Chromium in Docker)
 
-### B) Core BI Pipeline
-- Context-aware memory: uses conversation history to handle follow-up queries
-- Ambiguity handling: asks clarification when the question is incomplete (e.g., "top customers")
+### B) Auth + RBAC
+- Authentication via username/password (demo-style)
+- Role attached to the session (`admin`, `analyst`, `exec`)
+- RBAC policies enforce:
+  - per-role max row limits
+  - optional table/column access control
+- Admin Settings page should be blocked for non-admin roles.
+
+### C) Core BI Pipeline
+- Memory/context: uses conversation history to handle follow-up questions
+- Ambiguity handling: asks clarification when question is underspecified
 - Schema grounding:
-  - uses live database schema and sample rows to reduce hallucinations
+  - reads actual DB schema
+  - retrieves relevant schema snippets
 - Semantic layer:
-  - metrics definitions (e.g., revenue formula)
-  - business glossary (meaning of “sales”, “top”, “recent”)
-- SQL generation: Ollama LLM generates SQL from the natural language request
+  - business definitions/metrics (e.g., revenue formula)
+  - naming conventions (sales/revenue/orders)
+- SQL generation:
+  - LLM provider is configurable:
+    - **Groq (cloud)** recommended for public demo deployment
+    - Ollama (local) supported for private/local runs
 - Safety layer:
-  - allows only SELECT statements
-  - blocks DDL/DML (INSERT/UPDATE/DELETE/DROP/ALTER/CREATE)
+  - allows only read-only `SELECT` / `WITH ... SELECT`
+  - blocks DDL/DML (INSERT/UPDATE/DELETE/DROP/ALTER/CREATE/PRAGMA/etc.)
   - enforces LIMIT and role-based maximum rows
 - SQL rewrite:
-  - fixes table name variants (e.g., "OrderDetails" vs "Order Details")
-  - fixes column qualifiers after rewrite
+  - fixes common schema variants
+  - normalizes table/column qualifiers
 - Execution + self-correction:
-  - runs SQL
-  - if error occurs, re-prompts the LLM with the DB error and retries
+  - executes SQL using SQLAlchemy/Pandas
+  - if execution fails, retries with corrected SQL (configurable retries)
 
-### C) Database
+### D) Database
 - Northwind SQLite database (`db/northwind.db`)
 - Query execution via SQLAlchemy + Pandas
 
-### D) Observability & Logs
+### E) Observability & Logs
 - Query logs stored in `logs/queries.jsonl`
 - Favorites stored in `logs/favorites.json`
 - Used by Query History page and evaluation scripts
+
+> Note: On some free deployments (e.g., Render free), filesystem can be ephemeral on restarts/redeploys, so logs/history may reset.
+
+---
+
+## Deployment Architecture
+### Public Demo (Recommended)
+- **Render (Docker)** hosts Streamlit app
+- **Groq API** provides the LLM (cloud)
+- Secrets (API keys, passwords) stored as **Render Environment Variables**
+
+### Local/Private Mode
+- Streamlit app runs locally
+- Optional: **Ollama** runs locally as the LLM provider
+
+---
 
 ## Diagram (Text)
 User
@@ -74,10 +116,10 @@ User
     → Auth / RBAC
       → Pipeline (Memory + Ambiguity Handling)
         → Context Retrieval (Schema + Semantic Layer)
-          → Ollama LLM (SQL Generation)
-            → SQL Safety + Limit + RBAC checks
+          → LLM Provider (Groq / Ollama / OpenAI)
+            → SQL Normalization + Safety + Limit + RBAC checks
               → SQLite Northwind DB Execution
                 → Self-Correction (if needed)
-                  → Results (DF)
+                  → Results (DataFrame)
                     → Summary + Plotly Visualization + Export
                       → Logs (History/Evaluation)
