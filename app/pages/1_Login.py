@@ -12,7 +12,9 @@ init_session()
 st.title("Login")
 
 if st.session_state.user:
-    st.success(f"Logged in: {st.session_state.user['username']} ({st.session_state.user['role']})")
+    st.success(
+        f"Logged in: {st.session_state.user['username']} ({st.session_state.user['role']})"
+    )
     if st.button("Logout"):
         logout(st.session_state)
         st.rerun()
@@ -27,4 +29,5 @@ else:
             st.session_state.user = u
             st.rerun()
 
-st.caption("Demo users: admin/admin123, analyst/analyst123, exec/exec123")
+# Public demo hint (do NOT show admin credentials publicly)
+st.caption("Demo login: demo / demo123")
