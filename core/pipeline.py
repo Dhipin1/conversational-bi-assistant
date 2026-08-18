@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import json
 from dataclasses import dataclass
@@ -32,6 +33,11 @@ from auth.rbac import get_max_limit, validate_sql_for_role
 
 ROOT = Path(__file__).resolve().parents[1]
 LOG_PATH = ROOT / "logs" / "queries.jsonl"
+
+# Load .env only for local dev (DO NOT override platform env vars like Render)
+_ENV_PATH = ROOT / ".env"
+if _ENV_PATH.exists():
+    load_dotenv(_ENV_PATH, override=False)
 
 
 @dataclass
@@ -67,17 +73,9 @@ _SEM_RET = None
 def _get_cached_resources():
     """
     Initialize database/schema/retriever resources only once per process.
-
-    Previously these objects were rebuilt for every user question.
-    Rebuilding the schema and BM25 indexes caused unnecessary overhead.
     """
 
-    global _ENGINE
-    global _SQLDB
-    global _AVAILABLE_TABLES
-    global _SCHEMA_INFO
-    global _TABLE_RET
-    global _SEM_RET
+    global _ENGINE, _SQLDB, _AVAILABLE_TABLES, _SCHEMA_INFO, _TABLE_RET, _SEM_RET
 
     if _ENGINE is None:
         _ENGINE = get_engine()
@@ -86,16 +84,9 @@ def _get_cached_resources():
         _SQLDB = get_sqldb()
 
     if _SCHEMA_INFO is None:
-        _AVAILABLE_TABLES = list(
-            _SQLDB.get_usable_table_names()
-        )
-
+        _AVAILABLE_TABLES = list(_SQLDB.get_usable_table_names())
         _SCHEMA_INFO = schema_text(_SQLDB)
-
-        _TABLE_RET, _SEM_RET = build_retrievers(
-            _SCHEMA_INFO,
-            ROOT,
-        )
+        _TABLE_RET, _SEM_RET = build_retrievers(_SCHEMA_INFO, ROOT)
 
     return (
         _ENGINE,
@@ -110,16 +101,8 @@ def _get_cached_resources():
 def clear_resource_cache():
     """
     Clear cached database/schema/retriever resources.
-
-    Use this after changing the database or schema.
     """
-
-    global _ENGINE
-    global _SQLDB
-    global _AVAILABLE_TABLES
-    global _SCHEMA_INFO
-    global _TABLE_RET
-    global _SEM_RET
+    global _ENGINE, _SQLDB, _AVAILABLE_TABLES, _SCHEMA_INFO, _TABLE_RET, _SEM_RET
 
     _ENGINE = None
     _SQLDB = None
@@ -130,35 +113,18 @@ def clear_resource_cache():
 
 
 def log_event(payload: dict):
-    LOG_PATH.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    with LOG_PATH.open(
-        "a",
-        encoding="utf-8",
-    ) as file:
-        file.write(
-            json.dumps(
-                payload,
-                ensure_ascii=False,
-            )
-            + "\n"
-        )
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with LOG_PATH.open("a", encoding="utf-8") as file:
+        file.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
 def run_query(engine, sql: str) -> pd.DataFrame:
-    return pd.read_sql_query(
-        text(sql),
-        engine,
-    )
+    return pd.read_sql_query(text(sql), engine)
 
 
 def language_hint_from_question(question: str) -> str:
     if detect is None:
         return "en"
-
     try:
         return detect(question)
     except Exception:
@@ -168,19 +134,14 @@ def language_hint_from_question(question: str) -> str:
 def df_preview_text(df: pd.DataFrame) -> str:
     if df is None:
         return ""
-
     small = df.head(12)
-
     try:
         return small.to_markdown(index=False)
     except Exception:
         return small.to_csv(index=False)
 
 
-def fallback_chart_spec(
-    df: pd.DataFrame,
-    user_question: str,
-) -> dict:
+def fallback_chart_spec(df: pd.DataFrame, user_question: str) -> dict:
     if df is None or df.empty:
         return {
             "summary_md": "No rows were returned.",
@@ -195,10 +156,7 @@ def fallback_chart_spec(
     # Single-value result: KPI
     if df.shape == (1, 1):
         return {
-            "summary_md": (
-                f"Returned a single KPI value for "
-                f"**{columns[0]}**."
-            ),
+            "summary_md": f"Returned a single KPI value for **{columns[0]}**.",
             "chart_type": "kpi",
             "x": None,
             "y": columns[0],
@@ -209,29 +167,16 @@ def fallback_chart_spec(
     if len(columns) >= 2:
         x = columns[0]
         y = columns[1]
-
         x_lower = str(x).lower()
 
         chart_type = (
             "line"
-            if any(
-                keyword in x_lower
-                for keyword in [
-                    "date",
-                    "month",
-                    "year",
-                    "time",
-                    "period",
-                ]
-            )
+            if any(k in x_lower for k in ["date", "month", "year", "time", "period"])
             else "bar"
         )
 
         return {
-            "summary_md": (
-                f"Returned **{len(df)} rows** "
-                "for the requested analysis."
-            ),
+            "summary_md": f"Returned **{len(df)} rows** for the requested analysis.",
             "chart_type": chart_type,
             "x": x,
             "y": y,
@@ -248,31 +193,16 @@ def fallback_chart_spec(
 
 
 def _needs_llm_chart_decision(df: pd.DataFrame) -> bool:
-    """
-    Return True only when visualization selection requires an LLM.
-
-    Rule-based chart selection is sufficient for:
-      - Empty results
-      - One-column results
-      - Two-column results
-      - Single KPI results
-
-    Results with three or more columns may require semantic decisions,
-    so they are sent to the visualization LLM.
-    """
-
     if df is None or df.empty:
         return False
-
     return df.shape[1] > 2
 
 
 def _is_time_series_question(question: str) -> bool:
-    question = (question or "").lower()
-
+    q = (question or "").lower()
     return any(
-        keyword in question
-        for keyword in [
+        k in q
+        for k in [
             "trend",
             "over time",
             "time series",
@@ -288,48 +218,27 @@ def _is_time_series_question(question: str) -> bool:
     )
 
 
-def _pick_time_x_column(
-    df: pd.DataFrame,
-) -> str | None:
+def _pick_time_x_column(df: pd.DataFrame) -> str | None:
     if df is None or df.empty:
         return None
-
-    for column in df.columns:
-        name = str(column).lower()
-
-        if any(
-            keyword in name
-            for keyword in [
-                "date",
-                "month",
-                "year",
-                "time",
-                "period",
-            ]
-        ):
-            return column
-
+    for col in df.columns:
+        name = str(col).lower()
+        if any(k in name for k in ["date", "month", "year", "time", "period"]):
+            return col
     return None
 
 
-def _pick_numeric_y_column(
-    df: pd.DataFrame,
-    exclude: str | None = None,
-) -> str | None:
+def _pick_numeric_y_column(df: pd.DataFrame, exclude: str | None = None) -> str | None:
     if df is None or df.empty:
         return None
 
-    for column in df.columns:
-        if exclude and column == exclude:
+    for col in df.columns:
+        if exclude and col == exclude:
             continue
 
-        numeric_values = pd.to_numeric(
-            df[column],
-            errors="coerce",
-        )
-
+        numeric_values = pd.to_numeric(df[col], errors="coerce")
         if numeric_values.notna().any():
-            return column
+            return col
 
     return None
 
@@ -339,22 +248,13 @@ def force_timeseries_chart_if_needed(
     df: pd.DataFrame,
     chart_spec: dict | None,
 ) -> dict | None:
-    """
-    Ensure time-series questions use a line chart.
-    """
-
     if df is None or df.empty:
         return chart_spec
 
     if not _is_time_series_question(user_question):
         return chart_spec
 
-    spec = (
-        chart_spec
-        if isinstance(chart_spec, dict)
-        else {}
-    )
-
+    spec = chart_spec if isinstance(chart_spec, dict) else {}
     columns = df.columns.tolist()
 
     chart_x = spec.get("x")
@@ -362,23 +262,15 @@ def force_timeseries_chart_if_needed(
 
     if chart_x not in columns:
         chart_x = None
-
     if chart_y not in columns:
         chart_y = None
 
     if chart_x is None:
-        chart_x = (
-            _pick_time_x_column(df)
-            or (columns[0] if columns else None)
-        )
+        chart_x = _pick_time_x_column(df) or (columns[0] if columns else None)
 
     if chart_y is None:
-        chart_y = (
-            _pick_numeric_y_column(
-                df,
-                exclude=chart_x,
-            )
-            or (columns[1] if len(columns) > 1 else None)
+        chart_y = _pick_numeric_y_column(df, exclude=chart_x) or (
+            columns[1] if len(columns) > 1 else None
         )
 
     if not chart_x or not chart_y:
@@ -387,14 +279,8 @@ def force_timeseries_chart_if_needed(
     spec["chart_type"] = "line"
     spec["x"] = chart_x
     spec["y"] = chart_y
-    spec["title"] = (
-        spec.get("title")
-        or user_question[:80]
-    )
-    spec["summary_md"] = (
-        spec.get("summary_md")
-        or f"Returned **{len(df)} rows**."
-    )
+    spec["title"] = spec.get("title") or user_question[:80]
+    spec["summary_md"] = spec.get("summary_md") or f"Returned **{len(df)} rows**."
 
     return spec
 
@@ -406,28 +292,79 @@ def _timing_dict(
     t_exec: float,
     t_viz: float | None = None,
 ) -> dict:
-    """
-    Convert internal timestamps into millisecond timings.
-    """
-
-    timings = {
-        "t_retrieval_ms": int(
-            (t_retrieval - t_setup) * 1000
-        ),
-        "t_sql_gen_ms": int(
-            (t_sql_gen - t_retrieval) * 1000
-        ),
-        "t_exec_ms": int(
-            (t_exec - t_sql_gen) * 1000
-        ),
-        "t_viz_ms": (
-            int((t_viz - t_exec) * 1000)
-            if t_viz is not None
-            else 0
-        ),
+    return {
+        "t_retrieval_ms": int((t_retrieval - t_setup) * 1000),
+        "t_sql_gen_ms": int((t_sql_gen - t_retrieval) * 1000),
+        "t_exec_ms": int((t_exec - t_sql_gen) * 1000),
+        "t_viz_ms": int((t_viz - t_exec) * 1000) if t_viz is not None else 0,
     }
 
-    return timings
+
+# ---------------------------------------------------------------------
+# SQL extraction helpers (fixes false "unsafe SQL" blocks)
+# ---------------------------------------------------------------------
+
+_SQL_START_RE = re.compile(r"\b(SELECT|WITH)\b", re.IGNORECASE)
+
+
+def _strip_code_fences(text: str) -> str:
+    """
+    Remove markdown ```sql fences if present.
+    """
+    if not text:
+        return ""
+    t = text.strip()
+
+    # Remove triple-backtick fenced blocks
+    if t.startswith("```"):
+        # Remove first fence line
+        t = re.sub(r"^\s*```(?:sql)?\s*", "", t, flags=re.IGNORECASE)
+        # Remove last fence
+        t = re.sub(r"\s*```\s*$", "", t)
+        t = t.strip()
+
+    return t
+
+
+def _extract_first_select_or_with(raw: str) -> str:
+    """
+    If the LLM returns explanations + SQL, extract the SQL statement that starts
+    with SELECT or WITH.
+    """
+    if not raw:
+        return ""
+
+    t = _strip_code_fences(raw)
+
+    # If it already begins with SELECT/WITH, return it
+    if _SQL_START_RE.match(t.strip()):
+        return t.strip()
+
+    # Otherwise find first SELECT/WITH occurrence
+    m = _SQL_START_RE.search(t)
+    if not m:
+        return t.strip()
+
+    return t[m.start():].strip()
+
+
+def _coerce_sql_from_llm(raw_sql: str) -> str:
+    """
+    Convert LLM output into clean SQL:
+    - remove fences
+    - extract first SELECT/WITH
+    - run normalize_sql
+    """
+    candidate = normalize_sql(raw_sql)
+
+    # If normalize_sql already yields a safe SELECT/WITH, keep it
+    if candidate and is_read_only_select(candidate):
+        return candidate
+
+    extracted = _extract_first_select_or_with(raw_sql)
+    extracted = normalize_sql(extracted)
+
+    return extracted
 
 
 def answer_question(
@@ -438,34 +375,18 @@ def answer_question(
 ) -> BIResponse:
     """
     Execute one conversational BI question.
-
-    source:
-      - app: normal application traffic
-      - eval: evaluation traffic
     """
-
-    load_dotenv(
-        ROOT / ".env",
-        override=True,
-    )
 
     t0 = time.time()
 
     # ---------------------------------------------------------------
     # 1. Resolve conversation ambiguity
     # ---------------------------------------------------------------
-
-    decision = resolve_question(
-        user_question,
-        chat_messages,
-    )
-
+    decision = resolve_question(user_question, chat_messages)
     resolved_question = decision.resolved_question
 
     if decision.needs_clarification:
-        elapsed = int(
-            (time.time() - t0) * 1000
-        )
+        elapsed = int((time.time() - t0) * 1000)
 
         log_event(
             {
@@ -482,10 +403,7 @@ def answer_question(
         )
 
         return BIResponse(
-            assistant_md=(
-                decision.message
-                or "Please clarify your request."
-            ),
+            assistant_md=decision.message or "Please clarify your request.",
             sql=None,
             df=None,
             chart_spec=None,
@@ -498,7 +416,6 @@ def answer_question(
     # ---------------------------------------------------------------
     # 2. Load cached resources
     # ---------------------------------------------------------------
-
     llm = get_llm()
 
     (
@@ -520,31 +437,19 @@ def answer_question(
         k_sem=3,
     )
 
-    history = format_chat_history(
-        chat_messages,
-        max_turns=10,
-    )
-
-    language_hint = language_hint_from_question(
-        resolved_question
-    )
+    history = format_chat_history(chat_messages, max_turns=10)
+    language_hint = language_hint_from_question(resolved_question)
 
     t_retrieval = time.time()
 
     default_limit = 200
     role_max_limit = get_max_limit(role)
 
-    max_fix_retries = int(
-        os.getenv(
-            "MAX_FIX_RETRIES",
-            "2",
-        )
-    )
+    max_fix_retries = int(os.getenv("MAX_FIX_RETRIES", "2"))
 
     # ---------------------------------------------------------------
     # 3. Generate SQL
     # ---------------------------------------------------------------
-
     generation_prompt = sql_generation_prompt(
         user_question=resolved_question,
         chat_history=history,
@@ -555,52 +460,28 @@ def answer_question(
         max_limit=role_max_limit,
     )
 
-    raw_sql_response = llm.invoke(
-        generation_prompt
-    )
+    raw_sql_response = llm.invoke(generation_prompt)
+    raw_sql = getattr(raw_sql_response, "content", str(raw_sql_response))
 
-    raw_sql = getattr(
-        raw_sql_response,
-        "content",
-        str(raw_sql_response),
-    )
+    sql = _coerce_sql_from_llm(raw_sql)
 
-    sql = normalize_sql(raw_sql)
-
-    sql = enforce_limit(
-        sql,
-        default_limit=default_limit,
-        max_limit=role_max_limit,
-    )
-
-    sql = fix_table_and_column_qualifiers(
-        sql,
-        available_tables,
-    )
+    sql = enforce_limit(sql, default_limit=default_limit, max_limit=role_max_limit)
+    sql = fix_table_and_column_qualifiers(sql, available_tables)
 
     t_sql_gen = time.time()
 
     timings_before_execution = {
-        "t_retrieval_ms": int(
-            (t_retrieval - t_setup) * 1000
-        ),
-        "t_sql_gen_ms": int(
-            (t_sql_gen - t_retrieval) * 1000
-        ),
+        "t_retrieval_ms": int((t_retrieval - t_setup) * 1000),
+        "t_sql_gen_ms": int((t_sql_gen - t_retrieval) * 1000),
     }
 
     # ---------------------------------------------------------------
     # 4. Safety and RBAC validation
     # ---------------------------------------------------------------
-
     if not is_read_only_select(sql):
-        elapsed = int(
-            (time.time() - t0) * 1000
-        )
-
+        elapsed = int((time.time() - t0) * 1000)
         error_message = (
-            "Blocked unsafe SQL. "
-            "Only read-only SELECT queries are allowed."
+            "Blocked unsafe SQL. Only read-only SELECT queries are allowed."
         )
 
         log_event(
@@ -609,6 +490,7 @@ def answer_question(
                 "role": role,
                 "question": resolved_question,
                 "sql": sql,
+                "raw_sql": raw_sql[:2000],  # helpful debug; truncated
                 "success": False,
                 "error": error_message,
                 "rows": None,
@@ -629,20 +511,10 @@ def answer_question(
             **timings_before_execution,
         )
 
-    allowed, rbac_error = validate_sql_for_role(
-        sql,
-        role,
-    )
-
+    allowed, rbac_error = validate_sql_for_role(sql, role)
     if not allowed:
-        elapsed = int(
-            (time.time() - t0) * 1000
-        )
-
-        error_message = (
-            rbac_error
-            or "Access denied."
-        )
+        elapsed = int((time.time() - t0) * 1000)
+        error_message = rbac_error or "Access denied."
 
         log_event(
             {
@@ -673,25 +545,19 @@ def answer_question(
     # ---------------------------------------------------------------
     # 5. Execute SQL and self-correct if needed
     # ---------------------------------------------------------------
-
     df = None
     last_error = None
     fix_retries = 0
 
     for attempt in range(max_fix_retries + 1):
         try:
-            df = run_query(
-                engine,
-                sql,
-            )
-
+            df = run_query(engine, sql)
             last_error = None
             fix_retries = attempt
             break
 
         except Exception as exc:
             last_error = str(exc)
-
             if attempt >= max_fix_retries:
                 break
 
@@ -705,54 +571,29 @@ def answer_question(
                 max_limit=role_max_limit,
             )
 
-            fixed_response = llm.invoke(
-                fix_prompt
-            )
+            fixed_response = llm.invoke(fix_prompt)
+            fixed_raw = getattr(fixed_response, "content", str(fixed_response))
 
-            fixed_raw = getattr(
-                fixed_response,
-                "content",
-                str(fixed_response),
-            )
-
-            fixed_sql = normalize_sql(
-                fixed_raw
-            )
-
+            fixed_sql = _coerce_sql_from_llm(fixed_raw)
             fixed_sql = enforce_limit(
-                fixed_sql,
-                default_limit=default_limit,
-                max_limit=role_max_limit,
+                fixed_sql, default_limit=default_limit, max_limit=role_max_limit
             )
-
             fixed_sql = fix_table_and_column_qualifiers(
-                fixed_sql,
-                available_tables,
+                fixed_sql, available_tables
             )
 
             if not is_read_only_select(fixed_sql):
-                last_error = (
-                    "The self-correction model generated "
-                    "unsafe SQL."
-                )
+                last_error = "The self-correction model generated unsafe SQL."
                 break
 
-            allowed, rbac_error = validate_sql_for_role(
-                fixed_sql,
-                role,
-            )
-
+            allowed, rbac_error = validate_sql_for_role(fixed_sql, role)
             if not allowed:
-                last_error = (
-                    rbac_error
-                    or "Corrected SQL was denied by RBAC."
-                )
+                last_error = rbac_error or "Corrected SQL was denied by RBAC."
                 break
 
             sql = fixed_sql
 
     t_exec = time.time()
-
     timings_after_execution = _timing_dict(
         t_setup=t_setup,
         t_retrieval=t_retrieval,
@@ -761,9 +602,7 @@ def answer_question(
     )
 
     if last_error is not None or df is None:
-        elapsed = int(
-            (time.time() - t0) * 1000
-        )
+        elapsed = int((time.time() - t0) * 1000)
 
         log_event(
             {
@@ -781,10 +620,7 @@ def answer_question(
         )
 
         return BIResponse(
-            assistant_md=(
-                "Could not execute the query.\n\n"
-                f"Error:\n\n`{last_error}`"
-            ),
+            assistant_md="Could not execute the query.\n\n" f"Error:\n\n`{last_error}`",
             sql=sql,
             df=None,
             chart_spec=None,
@@ -797,12 +633,8 @@ def answer_question(
     # ---------------------------------------------------------------
     # 6. Visualization
     # ---------------------------------------------------------------
-
-    # Use fast deterministic chart selection for simple result shapes.
-    # This avoids a second 4-second Ollama call for most questions.
     if _needs_llm_chart_decision(df):
         preview = df_preview_text(df)
-
         visualization_prompt = viz_prompt(
             user_question=resolved_question,
             df_head_md=preview,
@@ -810,39 +642,22 @@ def answer_question(
             language_hint=language_hint,
         )
 
-        visualization_response = llm.invoke(
-            visualization_prompt
-        )
-
+        visualization_response = llm.invoke(visualization_prompt)
         visualization_raw = getattr(
-            visualization_response,
-            "content",
-            str(visualization_response),
+            visualization_response, "content", str(visualization_response)
         )
 
-        chart_spec = extract_json_object(
-            visualization_raw
-        )
-
+        chart_spec = extract_json_object(visualization_raw)
         if not isinstance(chart_spec, dict):
-            chart_spec = fallback_chart_spec(
-                df,
-                resolved_question,
-            )
+            chart_spec = fallback_chart_spec(df, resolved_question)
     else:
-        chart_spec = fallback_chart_spec(
-            df,
-            resolved_question,
-        )
+        chart_spec = fallback_chart_spec(df, resolved_question)
 
     chart_spec = force_timeseries_chart_if_needed(
-        resolved_question,
-        df,
-        chart_spec,
+        resolved_question, df, chart_spec
     )
 
     t_viz = time.time()
-
     final_timings = _timing_dict(
         t_setup=t_setup,
         t_retrieval=t_retrieval,
@@ -852,20 +667,11 @@ def answer_question(
     )
 
     assistant_md = None
-
     if isinstance(chart_spec, dict):
-        assistant_md = chart_spec.get(
-            "summary_md"
-        )
+        assistant_md = chart_spec.get("summary_md")
 
-    assistant_md = (
-        assistant_md
-        or f"Returned **{len(df)} rows**."
-    )
-
-    elapsed = int(
-        (time.time() - t0) * 1000
-    )
+    assistant_md = assistant_md or f"Returned **{len(df)} rows**."
+    elapsed = int((time.time() - t0) * 1000)
 
     log_event(
         {
@@ -878,11 +684,7 @@ def answer_question(
             "rows": len(df),
             "elapsed_ms": elapsed,
             "fix_retries": fix_retries,
-            "chart_type": (
-                chart_spec.get("chart_type")
-                if isinstance(chart_spec, dict)
-                else None
-            ),
+            "chart_type": chart_spec.get("chart_type") if isinstance(chart_spec, dict) else None,
             **final_timings,
         }
     )
