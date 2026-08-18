@@ -1,41 +1,29 @@
-import re
+# core/sql_format.py
+from __future__ import annotations
 
-
-def extract_sql(text: str) -> str:
+def format_sql_pretty(sql: str | None) -> str:
     """
-    Extract one SQL query from an LLM response.
+    Pretty-format SQL for display in the UI.
 
-    Removes Markdown fences and leading labels, while preserving
-    SELECT and WITH queries.
+    Uses sqlparse if available; otherwise falls back to a simple cleanup.
+    This function should NEVER change query meaning (display-only).
     """
-    if not text:
+    if not sql:
         return ""
 
-    value = text.strip()
+    sql = str(sql).strip()
 
-    # Prefer content inside a fenced SQL block.
-    fenced_match = re.search(
-        r"```(?:sql)?\s*(.*?)```",
-        value,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    if fenced_match:
-        value = fenced_match.group(1).strip()
+    try:
+        import sqlparse  # type: ignore
 
-    # Find the beginning of a SELECT or WITH query.
-    query_start = re.search(
-        r"\b(SELECT|WITH)\b",
-        value,
-        flags=re.IGNORECASE,
-    )
-    if query_start:
-        value = value[query_start.start():]
+        return sqlparse.format(
+            sql,
+            reindent=True,
+            keyword_case="upper",
+            strip_comments=False,
+        ).strip()
 
-    # Remove a trailing Markdown fence, if present.
-    value = value.replace("```sql", "").replace("```SQL", "")
-    value = value.replace("```", "").strip()
-
-    # Allow one trailing semicolon, but no additional statement.
-    value = value.rstrip(";").strip()
-
-    return value
+    except Exception:
+        # Fallback formatting if sqlparse isn't installed
+        # (keep it simple so it never breaks)
+        return sql.replace("\t", "    ").strip()
